@@ -34,12 +34,14 @@ This document outlines the key benefits of the Maintenance Warden plugin for Tra
 - **Flexible Deployment**: Works in containerized, VM-based, or hybrid environments
 - **Scalable Architecture**: Scales with your Traefik instances without additional configuration
 - **Multiple Content Options**: Choose between file-based, inline content, or service-based delivery methods
+- **JWT Integration**: Leverage existing JWT authentication for maintenance bypass
 
 ### 5. Security Benefits
 
 - **Controlled Access**: Precise control over who can access services during maintenance
 - **Reduced Attack Surface**: Limit available endpoints during maintenance windows
 - **Header-Based Authorization**: Secure bypass mechanism with configurable values
+- **JWT-Based Authentication**: Use existing JWT authentication for secure, role-based maintenance access
 - **Sanitized Responses**: Prevent leaking of internal errors during maintenance
 
 ## Comparison with Alternative Approaches

@@ -171,6 +171,36 @@ http:
           logLevel: 1
 ```
 
+### JWT Token-Based Bypass Configuration
+
+```yaml
+# Dynamic configuration
+http:
+  middlewares:
+    jwt-maintenance:
+      plugin:
+        maintenance-warden:
+          maintenanceContent: "<html><body><h1>Under Maintenance</h1><p>We'll be back shortly.</p></body></html>"
+          contentType: "text/html; charset=utf-8"
+          
+          # JWT token bypass configuration
+          bypassJWTTokenHeader: "Authorization"  # Header containing the JWT token
+          bypassJWTTokenClaim: "role"  # Claim in the JWT token to check
+          bypassJWTTokenClaimValue: "admin"  # Expected value of the claim
+          
+          # Still support header-based bypass as a fallback
+          bypassHeader: "X-Maintenance-Bypass"
+          bypassHeaderValue: "secret-token"
+          
+          enabled: true
+          statusCode: 503
+          bypassPaths:
+            - "/health"
+            - "/api/status"
+```
+
+With this configuration, users with a valid JWT token containing the claim `"role": "admin"` will bypass the maintenance page. This is ideal for environments that already use JWT authentication for their applications.
+
 ## Deployment Scenarios
 
 ### Scenario 1: Global Maintenance Mode

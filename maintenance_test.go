@@ -3,6 +3,8 @@ package traefik_maintenance_warden
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -243,6 +245,220 @@ func TestMaintenanceBypass(t *testing.T) {
 				if location != tt.expectedRedirectURL {
 					t.Errorf("Expected redirect to %s, got %s", tt.expectedRedirectURL, location)
 				}
+			}
+		})
+	}
+}
+
+func TestJWTTokenBypass(t *testing.T) {
+	// Create a valid JWT token with custom claims
+	// Format: header.payload.signature (we're only concerned with the payload part for this test)
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"1234567890","role":"admin","iat":1516239022}`))
+	signature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
+	validToken := header + "." + payload + "." + signature
+	
+	// Create another valid JWT token with a different claim value
+	wrongPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"1234567890","role":"user","iat":1516239022}`))
+	wrongValueToken := header + "." + wrongPayload + "." + signature
+
+	// Create an invalid JWT token
+	invalidToken := "invalid.token.format"
+
+	tests := []struct {
+		name                  string
+		enabled               bool
+		bypassJWTTokenHeader  string
+		bypassJWTTokenClaim   string
+		bypassJWTTokenClaimValue string
+		tokenToUse            string
+		expectedStatusCode    int
+	}{
+		{
+			name:                  "JWT token with correct claim value should bypass",
+			enabled:               true,
+			bypassJWTTokenHeader:  "Authorization",
+			bypassJWTTokenClaim:   "role",
+			bypassJWTTokenClaimValue: "admin",
+			tokenToUse:            validToken,
+			expectedStatusCode:    http.StatusOK,
+		},
+		{
+			name:                  "JWT token with wrong claim value should not bypass",
+			enabled:               true,
+			bypassJWTTokenHeader:  "Authorization",
+			bypassJWTTokenClaim:   "role",
+			bypassJWTTokenClaimValue: "admin",
+			tokenToUse:            wrongValueToken,
+			expectedStatusCode:    http.StatusServiceUnavailable,
+		},
+		{
+			name:                  "Invalid JWT token should not bypass",
+			enabled:               true,
+			bypassJWTTokenHeader:  "Authorization",
+			bypassJWTTokenClaim:   "role",
+			bypassJWTTokenClaimValue: "admin",
+			tokenToUse:            invalidToken,
+			expectedStatusCode:    http.StatusServiceUnavailable,
+		},
+		{
+			name:                  "JWT token with Bearer prefix should bypass",
+			enabled:               true,
+			bypassJWTTokenHeader:  "Authorization",
+			bypassJWTTokenClaim:   "role",
+			bypassJWTTokenClaimValue: "admin",
+			tokenToUse:            "Bearer " + validToken,
+			expectedStatusCode:    http.StatusOK,
+		},
+		{
+			name:                  "Missing token should not bypass",
+			enabled:               true,
+			bypassJWTTokenHeader:  "Authorization",
+			bypassJWTTokenClaim:   "role", 
+			bypassJWTTokenClaimValue: "admin",
+			tokenToUse:            "",
+			expectedStatusCode:    http.StatusServiceUnavailable,
+		},
+		{
+			name:                  "JWT bypass should be disabled when claim is empty",
+			enabled:               true,
+			bypassJWTTokenHeader:  "Authorization",
+			bypassJWTTokenClaim:   "",
+			bypassJWTTokenClaimValue: "admin",
+			tokenToUse:            validToken,
+			expectedStatusCode:    http.StatusServiceUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a test handler that always returns 200 OK
+			nextHandler := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+				rw.WriteHeader(http.StatusOK)
+			})
+
+			// Create the middleware config
+			cfg := &Config{
+				MaintenanceContent:     "<html><body>Maintenance Page</body></html>",
+				Enabled:                tt.enabled,
+				StatusCode:             http.StatusServiceUnavailable,
+				BypassJWTTokenHeader:   tt.bypassJWTTokenHeader,
+				BypassJWTTokenClaim:    tt.bypassJWTTokenClaim,
+				BypassJWTTokenClaimValue: tt.bypassJWTTokenClaimValue,
+			}
+
+			// Create the middleware
+			middleware, err := New(context.Background(), nextHandler, cfg, "test")
+			if err != nil {
+				t.Fatalf("Error creating middleware: %v", err)
+			}
+
+			// Create a test request
+			req := httptest.NewRequest(http.MethodGet, "http://localhost", nil)
+			
+			// Add the JWT token if specified
+			if tt.tokenToUse != "" {
+				req.Header.Set(tt.bypassJWTTokenHeader, tt.tokenToUse)
+			}
+
+			// Create a recorder to capture the response
+			recorder := httptest.NewRecorder()
+
+			// Process the request
+			middleware.ServeHTTP(recorder, req)
+
+			// Check the response status code
+			if recorder.Code != tt.expectedStatusCode {
+				t.Errorf("Expected status code %d but got %d", tt.expectedStatusCode, recorder.Code)
+			}
+
+			// If maintenance mode should be active, check for the maintenance headers
+			if tt.expectedStatusCode != http.StatusOK {
+				if recorder.Header().Get("X-Maintenance-Mode") != "true" {
+					t.Error("Expected X-Maintenance-Mode header to be set to true")
+				}
+				if recorder.Header().Get("Retry-After") == "" {
+					t.Error("Expected Retry-After header to be set")
+				}
+			}
+		})
+	}
+}
+
+func TestGetJWTClaimValue(t *testing.T) {
+	// Initialize a test middleware instance
+	middleware := &MaintenanceBypass{
+		logLevel: LogLevelDebug,
+		logger:   log.New(os.Stdout, "[test] ", log.LstdFlags),
+	}
+
+	// Create test cases
+	tests := []struct {
+		name        string
+		token       string
+		claimName   string
+		expected    string
+		expectError bool
+	}{
+		{
+			name:        "Valid token with string claim",
+			token:       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwicm9sZSI6ImFkbWluIiwiaWF0IjoxNTE2MjM5MDIyfQ.signature",
+			claimName:   "role",
+			expected:    "admin",
+			expectError: false,
+		},
+		{
+			name:        "Valid token with numeric claim",
+			token:       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWdlIjoyNSwiaWF0IjoxNTE2MjM5MDIyfQ.signature",
+			claimName:   "age",
+			expected:    "25",
+			expectError: false,
+		},
+		{
+			name:        "Valid token with boolean claim",
+			token:       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiYWN0aXZlIjp0cnVlLCJpYXQiOjE1MTYyMzkwMjJ9.signature",
+			claimName:   "active",
+			expected:    "true",
+			expectError: false,
+		},
+		{
+			name:        "Claim not found",
+			token:       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiaWF0IjoxNTE2MjM5MDIyfQ.signature",
+			claimName:   "role",
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name:        "Invalid token format",
+			token:       "invalid.token",
+			claimName:   "role",
+			expected:    "",
+			expectError: true,
+		},
+		{
+			name:        "Invalid payload",
+			token:       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.invalid_base64.signature",
+			claimName:   "role",
+			expected:    "",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Get the claim value
+			value, err := middleware.getJWTClaimValue(tt.token, tt.claimName)
+
+			// Check error
+			if tt.expectError && err == nil {
+				t.Error("Expected an error but got none")
+			} else if !tt.expectError && err != nil {
+				t.Errorf("Did not expect an error but got: %v", err)
+			}
+
+			// Check value
+			if value != tt.expected {
+				t.Errorf("Expected claim value %q but got %q", tt.expected, value)
 			}
 		})
 	}
@@ -1537,6 +1753,201 @@ func TestAnnotationBasedMaintenance(t *testing.T) {
 				if string(body) != maintenanceContent {
 					t.Errorf("Expected body %q, got %q", maintenanceContent, string(body))
 				}
+			}
+		})
+	}
+}
+
+// TestServeHTTPDefaultCase tests the default case in ServeHTTP when no maintenance source is provided
+func TestServeHTTPDefaultCase(t *testing.T) {
+	// Create a test handler
+	nextHandler := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	})
+
+	// Create a test recorder
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/", nil)
+
+	// Create middleware with all content sources as nil/empty
+	cfg := &Config{
+		Enabled:    true,
+		StatusCode: 503,
+	}
+
+	_, err := New(context.Background(), nextHandler, cfg, "test")
+	if err == nil {
+		t.Fatalf("Expected New to fail without content sources, but it succeeded")
+	}
+
+	// Let's create one manually to test the default case branch
+	bypass := &MaintenanceBypass{
+		next:               nextHandler,
+		maintenanceService: nil, // No service URL
+		maintenanceFilePath: "",  // No file path
+		maintenanceContent: "",   // No content
+		enabled:            true,
+		statusCode:         503,
+		logger:             log.New(ioutil.Discard, "[test] ", log.LstdFlags),
+	}
+
+	// Serve the request
+	bypass.ServeHTTP(w, req)
+
+	// Check status code and response
+	if w.Code != 503 {
+		t.Errorf("Expected status code 503, got %d", w.Code)
+	}
+
+	expected := "Service temporarily unavailable"
+	if !strings.Contains(w.Body.String(), expected) {
+		t.Errorf("Expected body to contain %q, got %q", expected, w.Body.String())
+	}
+}
+
+// TestServeMaintenanceContentError tests the error handling in serveMaintenanceContent
+func TestServeMaintenanceContentError(t *testing.T) {
+	// Create a mock writer that returns an error on Write
+	mockWriter := &MockErrorResponseWriter{}
+	req, _ := http.NewRequest("GET", "/", nil)
+
+	// Create test logger to capture logs
+	logWriter := &testLogWriter{}
+	logger := log.New(logWriter, "[test] ", log.LstdFlags)
+
+	// Create the maintenance bypass with content
+	bypass := &MaintenanceBypass{
+		maintenanceContent: "Test maintenance content",
+		statusCode:         503,
+		logger:             logger,
+		logLevel:           LogLevelError,
+	}
+
+	// Serve the request
+	bypass.serveMaintenanceContent(mockWriter, req)
+
+	// Check that the error was logged
+	if !strings.Contains(logWriter.String(), "Error writing maintenance content") {
+		t.Errorf("Expected error log about writing maintenance content, got: %s", logWriter.String())
+	}
+}
+
+// MockErrorResponseWriter mocks an http.ResponseWriter that returns an error on Write
+type MockErrorResponseWriter struct {
+	headerWritten bool
+	headers       http.Header
+	statusCode    int
+}
+
+func (w *MockErrorResponseWriter) Header() http.Header {
+	if w.headers == nil {
+		w.headers = make(http.Header)
+	}
+	return w.headers
+}
+
+func (w *MockErrorResponseWriter) Write(b []byte) (int, error) {
+	return 0, fmt.Errorf("simulated write error")
+}
+
+func (w *MockErrorResponseWriter) WriteHeader(statusCode int) {
+	w.headerWritten = true
+	w.statusCode = statusCode
+}
+
+// TestGetJWTClaimValueComplete tests all claim types in getJWTClaimValue
+func TestGetJWTClaimValueComplete(t *testing.T) {
+	// Create test cases for different claim types
+	testCases := []struct {
+		name        string
+		claims      map[string]interface{}
+		claimName   string
+		expected    string
+		expectError bool
+	}{
+		{
+			name: "String Claim",
+			claims: map[string]interface{}{
+				"role": "admin",
+			},
+			claimName:   "role",
+			expected:    "admin",
+			expectError: false,
+		},
+		{
+			name: "Number Claim",
+			claims: map[string]interface{}{
+				"id": 12345.0,
+			},
+			claimName:   "id",
+			expected:    "12345",
+			expectError: false,
+		},
+		{
+			name: "Boolean Claim",
+			claims: map[string]interface{}{
+				"active": true,
+			},
+			claimName:   "active",
+			expected:    "true",
+			expectError: false,
+		},
+		{
+			name: "Map Claim",
+			claims: map[string]interface{}{
+				"complex": map[string]interface{}{
+					"nested": "value",
+				},
+			},
+			claimName:   "complex",
+			expected:    "map[nested:value]",
+			expectError: false,
+		},
+		{
+			name: "Missing Claim",
+			claims: map[string]interface{}{
+				"existing": "value",
+			},
+			claimName:   "missing",
+			expected:    "",
+			expectError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create the MaintenanceBypass
+			bypass := &MaintenanceBypass{
+				logger:   log.New(ioutil.Discard, "[test] ", log.LstdFlags),
+				logLevel: LogLevelNone,
+			}
+
+			// Create a JWT token with the specified claims
+			payload, err := json.Marshal(tc.claims)
+			if err != nil {
+				t.Fatalf("Failed to marshal claims: %v", err)
+			}
+
+			// Encode with base64
+			encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
+			
+			// Create a fake token with a header and signature
+			tokenString := "header." + encodedPayload + ".signature"
+
+			// Call the function
+			result, err := bypass.getJWTClaimValue(tokenString, tc.claimName)
+
+			// Verify the result
+			if tc.expectError && err == nil {
+				t.Errorf("Expected error but got nil")
+			}
+
+			if !tc.expectError && err != nil {
+				t.Errorf("Expected no error but got: %v", err)
+			}
+
+			if result != tc.expected && !tc.expectError {
+				t.Errorf("Expected claim value %q, got %q", tc.expected, result)
 			}
 		})
 	}

@@ -160,6 +160,9 @@ http:
 | `contentType` | string | `"text/html; charset=utf-8"` | Content type header when serving a static file |
 | `bypassHeader` | string | `"X-Maintenance-Bypass"` | Name of the header that allows bypassing maintenance mode |
 | `bypassHeaderValue` | string | `"true"` | Expected value of the bypass header |
+| `bypassJWTTokenHeader` | string | `"Authorization"` | Header containing the JWT token for bypassing maintenance mode |
+| `bypassJWTTokenClaim` | string | `""` | Name of the claim in the JWT token that controls bypassing maintenance mode |
+| `bypassJWTTokenClaimValue` | string | `""` | Expected value of the JWT token claim to bypass maintenance mode |
 | `enabled` | boolean | `true` | Controls whether maintenance mode is active by default |
 | `statusCode` | integer | `503` | HTTP status code to return when in maintenance mode |
 | `bypassPaths` | string[] | `[]` | List of path prefixes that should bypass maintenance mode |
@@ -207,6 +210,13 @@ http:
 - **Use Cases**: Ideal for health checks, API status endpoints
 - **Configuration**: Array of path prefixes to bypass
 
+#### JWT Token-Based Bypass
+- **Implementation**: Extracts and verifies claims from JWT tokens
+- **Security**: Allows integration with existing JWT-based authentication systems
+- **Use Cases**: Perfect for admin dashboards, internal tools, or when team members use JWT-authenticated applications
+- **Flexibility**: Configurable token header, claim name, and expected claim value
+- **Bearer Support**: Automatically handles 'Bearer' prefix in Authorization headers
+
 ### 3. Response Management
 
 #### Status Code Control
@@ -247,6 +257,27 @@ The bypass header mechanism allows authorized users to access the service during
 2. **Use a complex, random value**: Set a random string as the header value, not simple values like "true" or "1"
 3. **Consider using HMAC**: For higher security, implement a time-based HMAC value mechanism
 4. **Combine with IP restrictions**: When possible, restrict the bypass to specific IP addresses using Traefik's IPWhitelist middleware
+
+### Using JWT Token Bypass
+
+For environments that already use JWT-based authentication, you can leverage existing authentication mechanisms to control maintenance bypass:
+
+1. **Use existing authentication**: Leverage your existing JWT infrastructure for maintenance bypass
+2. **Role-based maintenance access**: Configure bypass based on user roles or permissions in the JWT
+3. **Fine-grained control**: Grant maintenance access only to specific teams or individuals based on JWT claims
+4. **Example configuration**:
+
+```yaml
+maintenance-warden:
+  maintenanceContent: "<html><body><h1>Under Maintenance</h1><p>We'll be back shortly.</p></body></html>"
+  bypassJWTTokenHeader: "Authorization"
+  bypassJWTTokenClaim: "role"
+  bypassJWTTokenClaimValue: "admin"
+  enabled: true
+  statusCode: 503
+```
+
+With this setup, only requests with a valid JWT token containing the claim `"role": "admin"` will bypass maintenance mode.
 
 ### Maintenance Service Security
 
@@ -390,6 +421,11 @@ http:
           # Security options
           bypassHeader: "X-Service-Access-Token"  # Custom non-obvious name
           bypassHeaderValue: "8f4j9FjWm2kDp3VxZsA7"  # Random complex value
+          
+          # JWT token bypass options
+          bypassJWTTokenHeader: "Authorization"  # Header containing the JWT token
+          bypassJWTTokenClaim: "role"  # Claim in the JWT token to check
+          bypassJWTTokenClaimValue: "admin"  # Expected value of the claim
           
           # Path bypass options
           bypassPaths:

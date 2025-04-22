@@ -40,6 +40,7 @@ Maintenance Warden is a middleware plugin for Traefik that intercepts HTTP reque
 5. If maintenance mode is enabled:
    - Check for bypass header and value
    - Check for bypass path matches
+   - Check for JWT token claim match
    - If any bypass condition is met, pass to target service
    - Otherwise, serve maintenance content (file or service)
 
@@ -54,7 +55,9 @@ flowchart TB
     CCC2 --> D2
     D2 -->|No| D[Target Service]
     D2 -->|Yes| E{Check Bypass Conditions}
-    E -->|Bypass Header Match\nor Path Match| D
+    E -->|Header Match| D
+    E -->|Path Match| D
+    E -->|JWT Token Claim Match| D
     E -->|No Bypass Match| F{Content Type}
     F -->|File-Based| G[Serve Maintenance File]
     F -->|Content-Based| I[Serve Inline Content]
@@ -97,6 +100,14 @@ flowchart TB
 - **Implementation**: Prefix matching for efficiency
 - **Use Cases**: Ideal for health checks, API status endpoints
 - **Configuration**: Array of path prefixes to bypass
+
+#### JWT Token-Based Bypass
+- **Implementation**: JWT token claim extraction and validation
+- **Security**: Integration with existing JWT authentication systems
+- **Use Cases**: Admin access, internal tools, authenticated developer access during maintenance
+- **Claim Extraction**: Lightweight extraction of claims without full JWT validation
+- **Flexibility**: Configurable token header, claim name, and expected claim value
+- **Bearer Support**: Automatic handling of 'Bearer' prefix in Authorization headers
 
 #### Special Cases
 - **Favicon Handling**: Optional special case for favicon.ico requests

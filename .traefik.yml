@@ -22,6 +22,11 @@ testData:
   enabled: true
   statusCode: 503
   
+  # JWT token bypass options
+  bypassJWTTokenHeader: "Authorization"
+  bypassJWTTokenClaim: "role"
+  bypassJWTTokenClaimValue: "admin"
+  
   # Path bypass options
   bypassPaths:
     - "/health"

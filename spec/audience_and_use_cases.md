@@ -156,4 +156,21 @@
 - No need for file access or network connectivity to separate services
 - Instant deployment with single configuration change
 - Consistent experience across all edge locations
-- Minimal resource requirements with no external dependencies 
+- Minimal resource requirements with no external dependencies
+
+### Use Case 7: JWT-Authenticated Applications
+
+**Scenario:** Organizations with applications using JWT authentication for role-based access control.
+
+**Pain Points:**
+- Need to maintain consistent authentication mechanism during maintenance
+- Difficult to provide access to specific roles or user groups during maintenance
+- Multiple authentication systems create management overhead
+- Inconsistent access control between normal operation and maintenance windows
+
+**Solution:**
+- JWT token claim-based bypass integrates with existing authentication
+- Role-based maintenance access using the same security model as the application
+- Administrators automatically gain maintenance access based on existing JWT roles
+- No need for separate bypass header credentials
+- Seamless integration with Single Sign-On (SSO) systems that issue JWT tokens 

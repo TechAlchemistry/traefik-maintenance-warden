@@ -24,6 +24,7 @@ The plugin is designed with simplicity, reliability, and flexibility in mind, ma
 
 - **Triple-Mode Flexibility**: Choose between file-based, content-based, or service-based maintenance pages
 - **Selective Access Control**: Maintain service access for authorized users via configurable bypass headers
+- **JWT Token Integration**: Support for JWT token-based bypass for role-based maintenance access
 - **Path-Based Exceptions**: Configure specific paths to bypass maintenance mode automatically
 - **Low Overhead**: Minimal performance impact with optimized request handling
 - **Kubernetes Ready**: Easily integrate with your Kubernetes configuration

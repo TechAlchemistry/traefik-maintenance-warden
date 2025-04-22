@@ -4,6 +4,8 @@ package traefik_maintenance_warden
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -47,6 +49,15 @@ type Config struct {
 	// BypassHeaderValue is the expected value of the bypass header
 	BypassHeaderValue string `json:"bypassHeaderValue,omitempty"`
 
+	// BypassJWTTokenHeader is the header containing the JWT token
+	BypassJWTTokenHeader string `json:"bypassJWTTokenHeader,omitempty"`
+
+	// BypassJWTTokenClaim is the claim name in the JWT token that contains the bypass value
+	BypassJWTTokenClaim string `json:"bypassJWTTokenClaim,omitempty"`
+
+	// BypassJWTTokenClaimValue is the expected value of the JWT token claim
+	BypassJWTTokenClaimValue string `json:"bypassJWTTokenClaimValue,omitempty"`
+
 	// Enabled controls whether the maintenance mode is active
 	Enabled bool `json:"enabled,omitempty"`
 
@@ -86,6 +97,9 @@ func CreateConfig() *Config {
 		MaintenanceContent:      "",
 		BypassHeader:            "X-Maintenance-Bypass",
 		BypassHeaderValue:       "true",
+		BypassJWTTokenHeader:    "Authorization",
+		BypassJWTTokenClaim:     "",
+		BypassJWTTokenClaimValue: "",
 		Enabled:                 true,
 		StatusCode:              503,
 		BypassPaths:             []string{},
@@ -111,6 +125,9 @@ type MaintenanceBypass struct {
 	fileMutex              sync.RWMutex
 	bypassHeader           string
 	bypassHeaderValue      string
+	bypassJWTTokenHeader   string
+	bypassJWTTokenClaim    string
+	bypassJWTTokenClaimValue string
 	enabled                bool
 	statusCode             int
 	bypassPaths            []string
@@ -149,6 +166,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		maintenanceContent:     config.MaintenanceContent,
 		bypassHeader:           config.BypassHeader,
 		bypassHeaderValue:      config.BypassHeaderValue,
+		bypassJWTTokenHeader:   config.BypassJWTTokenHeader,
+		bypassJWTTokenClaim:    config.BypassJWTTokenClaim,
+		bypassJWTTokenClaimValue: config.BypassJWTTokenClaimValue,
 		enabled:                config.Enabled,
 		statusCode:             statusCode,
 		bypassPaths:            config.BypassPaths,
@@ -300,6 +320,31 @@ func (m *MaintenanceBypass) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 			return
 		}
 	}
+	
+	// Check if JWT token has the bypass claim with the correct value
+	// Only check if bypassJWTTokenHeader and bypassJWTTokenClaim are configured
+	if m.bypassJWTTokenHeader != "" && m.bypassJWTTokenClaim != "" && m.bypassJWTTokenClaimValue != "" {
+		// Get the JWT token from the header
+		authHeader := req.Header.Get(m.bypassJWTTokenHeader)
+		if authHeader != "" {
+			// For Authorization headers, strip the "Bearer " prefix if present
+			tokenString := authHeader
+			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+				tokenString = authHeader[7:]
+			}
+			
+			// Parse and validate the JWT token
+			claimValue, err := m.getJWTClaimValue(tokenString, m.bypassJWTTokenClaim)
+			if err != nil {
+				m.log(LogLevelDebug, "Error parsing JWT token: %v", err)
+			} else if claimValue == m.bypassJWTTokenClaimValue {
+				// If JWT token has the bypass claim with the correct value, pass the request to the next handler
+				m.log(LogLevelDebug, "JWT token bypass claim found with value %s, passing to next handler", claimValue)
+				m.next.ServeHTTP(rw, req)
+				return
+			}
+		}
+	}
 
 	// No bypass condition met, serve the maintenance page
 	m.log(LogLevelInfo, "Serving maintenance page for %s", req.URL.String())
@@ -416,4 +461,42 @@ func (w *maintenanceResponseWriter) Write(b []byte) (int, error) {
 		w.WriteHeader(w.statusCode)
 	}
 	return w.ResponseWriter.Write(b)
+}
+
+// getJWTClaimValue extracts a claim value from a JWT token
+func (m *MaintenanceBypass) getJWTClaimValue(tokenString string, claimName string) (string, error) {
+	// Split the token into parts
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid JWT token format")
+	}
+
+	// Decode the payload (second part)
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("error decoding JWT payload: %w", err)
+	}
+
+	// Parse the payload
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return "", fmt.Errorf("error parsing JWT claims: %w", err)
+	}
+
+	// Extract the claim value
+	if value, ok := claims[claimName]; ok {
+		// Convert claim value to string
+		switch v := value.(type) {
+		case string:
+			return v, nil
+		case float64:
+			return fmt.Sprintf("%g", v), nil
+		case bool:
+			return fmt.Sprintf("%t", v), nil
+		default:
+			return fmt.Sprintf("%v", v), nil
+		}
+	}
+
+	return "", fmt.Errorf("claim %s not found in JWT token", claimName)
 }
