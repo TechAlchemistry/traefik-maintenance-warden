@@ -10,6 +10,7 @@ This document outlines the key benefits of the Maintenance Warden plugin for Tra
 - **Dynamic Toggling**: Enable/disable maintenance without redeploying applications
 - **Path-Based Control**: Keep critical endpoints available during maintenance
 - **Selective Access**: Allow specific users (via headers) to access services during maintenance
+- **Annotation-Based Control**: In Kubernetes, toggle maintenance mode per-service with simple annotations
 
 ### 2. User Experience Improvements
 
@@ -24,6 +25,7 @@ This document outlines the key benefits of the Maintenance Warden plugin for Tra
 - **Framework Agnostic**: Works with any application regardless of programming language
 - **Infrastructure as Code**: Maintenance configuration can be versioned and automated
 - **Testing Support**: Test changes during maintenance with bypass headers
+- **Kubernetes Native**: Full integration with Kubernetes annotations for GitOps workflows
 
 ### 4. Technical Advantages
 
@@ -155,6 +157,21 @@ Changing DNS records to point to a maintenance server during outages.
 - Inconsistent status code handling
 - Potentially insufficient access controls
 - Limited logging capabilities
+
+### Kubernetes Microservices Deployments
+
+**Maintenance Warden Approach:**
+- Annotation-based per-service maintenance mode
+- GitOps-friendly maintenance activation via manifest updates
+- Centralized middleware with decentralized control
+- Consistent maintenance experience across all services
+- Zero middleware reconfigurations needed for maintenance windows
+
+**Traditional Approaches:**
+- Complex deployment updates to toggle maintenance
+- Inconsistent implementation across services
+- No standardized bypass mechanisms
+- Manual reconfiguration of multiple resources
 
 ## ROI and Business Value
 

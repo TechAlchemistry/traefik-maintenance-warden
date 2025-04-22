@@ -67,23 +67,35 @@ type Config struct {
 
 	// ContentType is the content type header to set when serving the maintenance file
 	ContentType string `json:"contentType,omitempty"`
+
+	// EnabledAnnotation is the Kubernetes annotation name that controls the enabled state
+	EnabledAnnotation string `json:"enabledAnnotation,omitempty"`
+
+	// EnabledAnnotationValue is the expected value of the enabled annotation
+	EnabledAnnotationValue string `json:"enabledAnnotationValue,omitempty"`
+
+	// EnabledAnnotationHeader is the header that Traefik adds with the annotation value
+	EnabledAnnotationHeader string `json:"enabledAnnotationHeader,omitempty"`
 }
 
 // CreateConfig creates the default plugin configuration.
 func CreateConfig() *Config {
 	return &Config{
-		MaintenanceService:  "",
-		MaintenanceFilePath: "",
-		MaintenanceContent:  "",
-		BypassHeader:        "X-Maintenance-Bypass",
-		BypassHeaderValue:   "true",
-		Enabled:             true,
-		StatusCode:          503,
-		BypassPaths:         []string{},
-		BypassFavicon:       true,
-		LogLevel:            int(LogLevelError),
-		MaintenanceTimeout:  10,
-		ContentType:         "text/html; charset=utf-8",
+		MaintenanceService:      "",
+		MaintenanceFilePath:     "",
+		MaintenanceContent:      "",
+		BypassHeader:            "X-Maintenance-Bypass",
+		BypassHeaderValue:       "true",
+		Enabled:                 true,
+		StatusCode:              503,
+		BypassPaths:             []string{},
+		BypassFavicon:           true,
+		LogLevel:                int(LogLevelError),
+		MaintenanceTimeout:      10,
+		ContentType:             "text/html; charset=utf-8",
+		EnabledAnnotation:       "",
+		EnabledAnnotationValue:  "true",
+		EnabledAnnotationHeader: "",
 	}
 }
 
@@ -108,6 +120,9 @@ type MaintenanceBypass struct {
 	logLevel               LogLevel
 	timeout                time.Duration
 	contentType            string
+	enabledAnnotation      string
+	enabledAnnotationValue string
+	enabledAnnotationHeader string
 }
 
 // New creates a new MaintenanceBypass middleware.
@@ -129,19 +144,22 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 
 	// Create the middleware instance
 	m := &MaintenanceBypass{
-		next:                next,
-		maintenanceFilePath: config.MaintenanceFilePath,
-		maintenanceContent:  config.MaintenanceContent,
-		bypassHeader:        config.BypassHeader,
-		bypassHeaderValue:   config.BypassHeaderValue,
-		enabled:             config.Enabled,
-		statusCode:          statusCode,
-		bypassPaths:         config.BypassPaths,
-		bypassFavicon:       config.BypassFavicon,
-		name:                name,
-		logger:              logger,
-		logLevel:            LogLevel(config.LogLevel),
-		contentType:         contentType,
+		next:                   next,
+		maintenanceFilePath:    config.MaintenanceFilePath,
+		maintenanceContent:     config.MaintenanceContent,
+		bypassHeader:           config.BypassHeader,
+		bypassHeaderValue:      config.BypassHeaderValue,
+		enabled:                config.Enabled,
+		statusCode:             statusCode,
+		bypassPaths:            config.BypassPaths,
+		bypassFavicon:          config.BypassFavicon,
+		name:                   name,
+		logger:                 logger,
+		logLevel:               LogLevel(config.LogLevel),
+		contentType:            contentType,
+		enabledAnnotation:      config.EnabledAnnotation,
+		enabledAnnotationValue: config.EnabledAnnotationValue,
+		enabledAnnotationHeader: config.EnabledAnnotationHeader,
 	}
 
 	// If maintenance file path is specified, try to read it initially
@@ -218,10 +236,38 @@ func (m *MaintenanceBypass) log(level LogLevel, format string, v ...interface{})
 	}
 }
 
+// isMaintenanceEnabled checks if maintenance mode is enabled for this request
+// taking into account both the static configuration and any dynamic annotation
+func (m *MaintenanceBypass) isMaintenanceEnabled(req *http.Request) bool {
+	// If annotation-based configuration is enabled, check for annotation
+	if m.enabledAnnotation != "" && m.enabledAnnotationHeader != "" {
+		// Check for the annotation value in the header
+		annotationHeader := req.Header.Get(m.enabledAnnotationHeader)
+		m.log(LogLevelDebug, "Checking annotation header: %s = %s", m.enabledAnnotationHeader, annotationHeader)
+		
+		// Check if the annotation exists with the right value
+		annotationWithValue := fmt.Sprintf("%s=%s", m.enabledAnnotation, m.enabledAnnotationValue)
+		if strings.Contains(annotationHeader, annotationWithValue) {
+			m.log(LogLevelDebug, "Found annotation %s with value %s, maintenance mode enabled", 
+				m.enabledAnnotation, m.enabledAnnotationValue)
+			return true
+		}
+		
+		// If we're using annotation control and the annotation doesn't match, use the static config
+		m.log(LogLevelDebug, "Annotation control enabled but value not found or not matching, using static config: %v", m.enabled)
+	}
+	
+	// No annotation control or no match, use the static configuration
+	return m.enabled
+}
+
 // ServeHTTP implements the http.Handler interface.
 func (m *MaintenanceBypass) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	// Check if maintenance mode is enabled, considering annotations if configured
+	enabled := m.isMaintenanceEnabled(req)
+	
 	// If maintenance mode is disabled, simply pass to the next handler
-	if !m.enabled {
+	if !enabled {
 		m.log(LogLevelDebug, "Maintenance mode is disabled, passing request through: %s", req.URL.String())
 		m.next.ServeHTTP(rw, req)
 		return
@@ -244,34 +290,41 @@ func (m *MaintenanceBypass) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 	}
 
 	// Check if the request has the bypass header with the correct value
-	headerValue := req.Header.Get(m.bypassHeader)
-	if headerValue == m.bypassHeaderValue {
-		// If the bypass header is present with the correct value, pass the request to the next handler
-		m.log(LogLevelDebug, "Bypass header found with value %s, passing to next handler", headerValue)
-		m.next.ServeHTTP(rw, req)
-		return
+	// Only check if bypassHeader is configured
+	if m.bypassHeader != "" {
+		headerValue := req.Header.Get(m.bypassHeader)
+		if headerValue == m.bypassHeaderValue {
+			// If the bypass header is present with the correct value, pass the request to the next handler
+			m.log(LogLevelDebug, "Bypass header found with value %s, passing to next handler", headerValue)
+			m.next.ServeHTTP(rw, req)
+			return
+		}
 	}
 
-	m.log(LogLevelInfo, "No bypass condition met for %s, serving maintenance page", req.URL.String())
+	// No bypass condition met, serve the maintenance page
+	m.log(LogLevelInfo, "Serving maintenance page for %s", req.URL.String())
 
-	// Set appropriate response headers for maintenance mode
-	rw.Header().Set("Retry-After", "3600") // Suggest client retry after 1 hour
+	// Set all common maintenance-related headers here
 	rw.Header().Set("X-Maintenance-Mode", "true")
-
-	// If we have a maintenance file configured, serve that
-	if m.maintenanceFilePath != "" {
-		m.serveMaintenanceFile(rw, req)
-		return
-	}
-
-	// If we have direct content configured, serve that
+	rw.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	rw.Header().Set("Retry-After", "3600") // Suggest client retry after 1 hour
+	rw.Header().Set("Content-Type", m.contentType)
+	
+	// Determine which maintenance content to serve
 	if m.maintenanceContent != "" {
+		// If inline content is provided, serve that
 		m.serveMaintenanceContent(rw, req)
-		return
+	} else if m.maintenanceFilePath != "" {
+		// If a file path is provided, serve the file
+		m.serveMaintenanceFile(rw, req)
+	} else if m.maintenanceService != nil {
+		// If a maintenance service is configured, proxy to it
+		m.proxyToMaintenanceService(rw, req)
+	} else {
+		// This should never happen as the configuration is validated in New()
+		rw.WriteHeader(m.statusCode)
+		rw.Write([]byte("Service temporarily unavailable"))
 	}
-
-	// Otherwise, proxy to the maintenance service
-	m.proxyToMaintenanceService(rw, req)
 }
 
 // serveMaintenanceFile serves the static maintenance file
@@ -280,7 +333,6 @@ func (m *MaintenanceBypass) serveMaintenanceFile(rw http.ResponseWriter, req *ht
 	err := m.loadMaintenanceFile()
 	if err != nil {
 		m.log(LogLevelError, "Failed to load maintenance file: %v", err)
-		rw.Header().Set("X-Maintenance-Mode", "true")
 		http.Error(rw, "Service Temporarily Unavailable", m.statusCode)
 		return
 	}
@@ -290,26 +342,21 @@ func (m *MaintenanceBypass) serveMaintenanceFile(rw http.ResponseWriter, req *ht
 	content := m.maintenanceFileContent
 	m.fileMutex.RUnlock()
 
-	// Set content type and other headers
-	rw.Header().Set("Content-Type", m.contentType)
-	rw.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	rw.Header().Set("X-Maintenance-Mode", "true")
-
 	// Write the status code and content
 	rw.WriteHeader(m.statusCode)
 	rw.Write(content)
 }
 
-// serveMaintenanceContent serves the direct maintenance content from configuration
+// serveMaintenanceContent serves the inline maintenance content
 func (m *MaintenanceBypass) serveMaintenanceContent(rw http.ResponseWriter, req *http.Request) {
-	// Set content type and other headers
-	rw.Header().Set("Content-Type", m.contentType)
-	rw.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	rw.Header().Set("X-Maintenance-Mode", "true")
-
-	// Write the status code and content
+	// Set the status code
 	rw.WriteHeader(m.statusCode)
-	rw.Write([]byte(m.maintenanceContent))
+	
+	// Write the content
+	_, err := rw.Write([]byte(m.maintenanceContent))
+	if err != nil {
+		m.log(LogLevelError, "Error writing maintenance content: %v", err)
+	}
 }
 
 // proxyToMaintenanceService proxies the request to the maintenance service
@@ -331,7 +378,7 @@ func (m *MaintenanceBypass) proxyToMaintenanceService(rw http.ResponseWriter, re
 	// Handle errors from the maintenance service
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
 		m.log(LogLevelError, "Error proxying to maintenance service: %v", err)
-		rw.Header().Set("X-Maintenance-Mode", "true")
+		// Don't need to set X-Maintenance-Mode here since it's already set in ServeHTTP
 		rw.WriteHeader(m.statusCode)
 		rw.Write([]byte("Service temporarily unavailable"))
 	}
@@ -348,14 +395,14 @@ func (m *MaintenanceBypass) proxyToMaintenanceService(rw http.ResponseWriter, re
 	proxy.ServeHTTP(maintenanceWriter, proxyReq)
 }
 
-// maintenanceResponseWriter is a simple custom response writer that just sets our status code
+// maintenanceResponseWriter is a wrapper for http.ResponseWriter that captures the status code
 type maintenanceResponseWriter struct {
 	http.ResponseWriter
 	statusCode int
 	headerSet  bool
 }
 
-// WriteHeader overrides the original WriteHeader to set our status code
+// WriteHeader captures the status code and passes it to the wrapped ResponseWriter
 func (w *maintenanceResponseWriter) WriteHeader(statusCode int) {
 	if !w.headerSet {
 		w.ResponseWriter.WriteHeader(w.statusCode)
@@ -363,7 +410,7 @@ func (w *maintenanceResponseWriter) WriteHeader(statusCode int) {
 	}
 }
 
-// Write ensures headers are set before writing the body
+// Write writes the response and sets a default status code if none has been set
 func (w *maintenanceResponseWriter) Write(b []byte) (int, error) {
 	if !w.headerSet {
 		w.WriteHeader(w.statusCode)

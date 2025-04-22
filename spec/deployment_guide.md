@@ -199,59 +199,101 @@ Apply maintenance mode to specific services only:
 # Dynamic configuration
 http:
   routers:
-    app1Router:
-      rule: "Host(`app1.example.com`)"
+    service-a:
+      rule: "Host(`service-a.example.com`)"
       middlewares:
-        - maintenance  # This service has maintenance mode
-      service: app1
-    
-    app2Router:
-      rule: "Host(`app2.example.com`)"
-      service: app2  # This service doesn't have maintenance mode
+        - maintenance
+      service: service-a
+      
+    service-b:
+      rule: "Host(`service-b.example.com`)"
+      # No maintenance middleware, remains available
+      service: service-b
 ```
 
-### Scenario 3: Scheduled Maintenance with Dynamic Configuration
+### Scenario 3: Annotation-Based Maintenance in Kubernetes
 
-For scheduled maintenance, you can use dynamic configuration reloading:
+Use annotations to control maintenance mode for specific Ingress resources:
 
-1. Create a maintenance-enabled.yml file:
+1. Configure the middleware to use annotation-based control:
 
 ```yaml
-# maintenance-enabled.yml
-http:
-  middlewares:
-    maintenance:
-      plugin:
-        maintenance-warden:
-          maintenanceFilePath: "/path/to/maintenance.html"
-          enabled: true
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: maintenance-warden
+  namespace: default
+spec:
+  plugin:
+    maintenance-warden:
+      maintenanceContent: "<html><body><h1>Under Maintenance</h1><p>We'll be back shortly.</p></body></html>"
+      bypassHeader: "X-Maintenance-Bypass"
+      bypassHeaderValue: "secret-token"
+      enabled: false  # Default to disabled
+      statusCode: 503
+      enabledAnnotation: "maintenance.example.com/enabled"
+      enabledAnnotationValue: "true"
+      enabledAnnotationHeader: "X-Kubernetes-Annotations"
 ```
 
-2. Create a maintenance-disabled.yml file:
+2. Configure Traefik to forward Kubernetes annotations as headers:
 
 ```yaml
-# maintenance-disabled.yml
-http:
-  middlewares:
-    maintenance:
-      plugin:
-        maintenance-warden:
-          maintenanceFilePath: "/path/to/maintenance.html"
-          enabled: false
+# Static Traefik configuration in values.yaml or traefik.yml
+providers:
+  kubernetesIngress:
+    allowEmptyServices: true
+    allowCrossNamespace: true
+    # Forward specific annotations as headers
+    annotationSelector: "maintenance.example.com/enabled"
 ```
 
-3. Use a script to swap the configuration at scheduled times:
+3. Apply the middleware globally to all services:
 
-```bash
-#!/bin/bash
-# Enable maintenance mode
-cp maintenance-enabled.yml /path/to/traefik/dynamic/maintenance.yml
-
-# ... perform maintenance tasks ...
-
-# Disable maintenance mode
-cp maintenance-disabled.yml /path/to/traefik/dynamic/maintenance.yml
+```yaml
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: global-middleware
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`/`)
+      kind: Rule
+      middlewares:
+        - name: maintenance-warden
+      priority: 1
+      services:
+        - name: noop@internal
+          kind: TraefikService
 ```
+
+4. Enable maintenance for specific services using annotations:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-service
+  annotations:
+    # This annotation will enable maintenance mode for this service
+    maintenance.example.com/enabled: "true"
+spec:
+  rules:
+    - host: service.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: my-service
+                port:
+                  number: 80
+```
+
+With this setup, you can enable or disable maintenance mode for any service by simply adding or removing the annotation, without changing the middleware configuration.
 
 ## Best Practices
 
@@ -399,7 +441,7 @@ Test that maintenance mode is working correctly:
 
 2. Make a request with bypass header (should access the service):
    ```bash
-   curl -I -H "X-Maintenance-Bypass: your-bypass-value" https://your-service.example.com
+   curl -I -H "X-Maintenance-Bypass: true" https://your-service.example.com
    ```
 
 ### Disabling Maintenance Mode

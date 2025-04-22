@@ -26,12 +26,18 @@ Maintenance Warden is a middleware plugin for Traefik that intercepts HTTP reque
    - Path-based bypass logic
    - Special case handling (e.g., favicon.ico)
 
+5. **Annotation-Based Control**
+   - Kubernetes annotation support for per-service maintenance mode
+   - Dynamic enabling/disabling without configuration changes
+   - Header-based annotation detection
+
 ### Data Flow
 
 1. Request arrives at Traefik
 2. Maintenance Warden middleware intercepts the request
-3. If maintenance mode is disabled, request passes through to the target service
-4. If maintenance mode is enabled:
+3. If annotation support is enabled, check for maintenance annotations
+4. If maintenance mode is disabled, request passes through to the target service
+5. If maintenance mode is enabled:
    - Check for bypass header and value
    - Check for bypass path matches
    - If any bypass condition is met, pass to target service
@@ -41,8 +47,13 @@ Maintenance Warden is a middleware plugin for Traefik that intercepts HTTP reque
 flowchart TB
     A[Client Request] --> B[Traefik]
     B --> C[Maintenance Warden]
-    C -->|Maintenance Mode Disabled| D[Target Service]
-    C -->|Maintenance Mode Enabled| E{Check Bypass\nConditions}
+    C -->|Check Annotations| CC{Annotation Enabled?}
+    CC -->|Yes| CCC[Use Annotation Setting]
+    CC -->|No| CCC2[Use Static Configuration]
+    CCC --> D2{Maintenance Mode Enabled?}
+    CCC2 --> D2
+    D2 -->|No| D[Target Service]
+    D2 -->|Yes| E{Check Bypass Conditions}
     E -->|Bypass Header Match\nor Path Match| D
     E -->|No Bypass Match| F{Content Type}
     F -->|File-Based| G[Serve Maintenance File]
@@ -108,7 +119,16 @@ flowchart TB
 - **X-Maintenance-Mode**: Status indicator for monitoring
 - **Cache-Control**: Prevents caching of maintenance responses
 
-### 4. Logging and Monitoring
+### 4. Kubernetes Integration
+
+#### Annotation-Based Maintenance Mode
+- **Implementation**: Dynamic maintenance mode toggle via annotations
+- **Configuration**: Custom annotation name and value configuration
+- **Headers**: Uses Traefik-forwarded Kubernetes annotation headers
+- **Default Behavior**: Falls back to static configuration if annotations not present
+- **Per-Service Control**: Enable maintenance for specific services without changing middleware config
+
+### 5. Logging and Monitoring
 
 #### Configurable Verbosity
 - **Levels**: None (0), Error (1), Info (2), Debug (3)

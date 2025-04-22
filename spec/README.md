@@ -27,6 +27,8 @@ The plugin is designed with simplicity, reliability, and flexibility in mind, ma
 - **Path-Based Exceptions**: Configure specific paths to bypass maintenance mode automatically
 - **Low Overhead**: Minimal performance impact with optimized request handling
 - **Kubernetes Ready**: Easily integrate with your Kubernetes configuration
+- **Annotation-Based Control**: Toggle maintenance mode per-service in Kubernetes using annotations
+- **Centralized Header Management**: Consistent maintenance response headers across all content types
 
 ## Getting Started
 

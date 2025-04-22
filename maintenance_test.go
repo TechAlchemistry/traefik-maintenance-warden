@@ -934,6 +934,10 @@ func TestServeMaintenanceFileErrors(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/path", nil)
 
+	// Set the headers that would normally be set by ServeHTTP
+	recorder.Header().Set("X-Maintenance-Mode", "true")
+	recorder.Header().Set("Content-Type", m.contentType)
+
 	// First, serve the file normally to make sure it works
 	m.serveMaintenanceFile(recorder, req)
 
@@ -954,6 +958,10 @@ func TestServeMaintenanceFileErrors(t *testing.T) {
 	// Create a new recorder
 	recorder = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "http://example.com/path", nil)
+
+	// Set the headers that would normally be set by ServeHTTP
+	recorder.Header().Set("X-Maintenance-Mode", "true")
+	recorder.Header().Set("Content-Type", m.contentType) 
 
 	// Call serveMaintenanceFile again - this should handle the error
 	m.serveMaintenanceFile(recorder, req)
@@ -1187,8 +1195,9 @@ func TestProxyToMaintenanceService(t *testing.T) {
 	// Add some custom headers to verify they're forwarded
 	req.Header.Set("X-Custom-Header", "custom-value")
 
-	// We need to set the header explicitly since we're not going through ServeHTTP
+	// Set the headers that would normally be set by ServeHTTP
 	recorder.Header().Set("X-Maintenance-Mode", "true")
+	recorder.Header().Set("Content-Type", m.contentType)
 
 	// Call proxyToMaintenanceService directly
 	m.proxyToMaintenanceService(recorder, req)
@@ -1232,6 +1241,10 @@ func TestProxyToMaintenanceService(t *testing.T) {
 	// Create a new recorder and request
 	recorder = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "http://example.com/test-path", nil)
+
+	// Set the headers that would normally be set by ServeHTTP
+	recorder.Header().Set("X-Maintenance-Mode", "true")
+	recorder.Header().Set("Content-Type", m.contentType)
 
 	// This should trigger the error handler
 	m.proxyToMaintenanceService(recorder, req)
@@ -1329,5 +1342,202 @@ func TestMaintenanceContent(t *testing.T) {
 
 	if string(body) != "This is the real service content" {
 		t.Errorf("Expected body %q, got %q", "This is the real service content", string(body))
+	}
+}
+
+// TestAnnotationBasedMaintenance tests the feature for enabling maintenance mode
+// based on Kubernetes annotations passed as request headers
+func TestAnnotationBasedMaintenance(t *testing.T) {
+	tests := []struct {
+		name                      string
+		enabled                   bool
+		enabledAnnotation         string
+		enabledAnnotationValue    string
+		enabledAnnotationHeader   string
+		requestAnnotationHeader   string
+		requestAnnotationValue    string
+		bypassHeader              string
+		bypassHeaderValue         string
+		expectedStatusCode        int
+		expectedMaintenanceHeader string
+	}{
+		{
+			name:                      "Maintenance enabled by annotation",
+			enabled:                   false,                               // Static config is disabled
+			enabledAnnotation:         "maintenance.example.com/enabled",
+			enabledAnnotationValue:    "true",
+			enabledAnnotationHeader:   "X-Kubernetes-Annotations",
+			requestAnnotationHeader:   "X-Kubernetes-Annotations",
+			requestAnnotationValue:    "maintenance.example.com/enabled=true,other.annotation=value",
+			bypassHeader:              "",
+			bypassHeaderValue:         "",
+			expectedStatusCode:        http.StatusServiceUnavailable,
+			expectedMaintenanceHeader: "true",
+		},
+		{
+			name:                      "Maintenance disabled by static config with no matching annotation",
+			enabled:                   false,                               // Static config is disabled
+			enabledAnnotation:         "maintenance.example.com/enabled",
+			enabledAnnotationValue:    "true",
+			enabledAnnotationHeader:   "X-Kubernetes-Annotations",
+			requestAnnotationHeader:   "X-Kubernetes-Annotations",
+			requestAnnotationValue:    "other.annotation=value",            // No maintenance annotation
+			bypassHeader:              "",
+			bypassHeaderValue:         "",
+			expectedStatusCode:        http.StatusOK,                       // Should pass through
+			expectedMaintenanceHeader: "",
+		},
+		{
+			name:                      "Maintenance enabled by static config, no annotation",
+			enabled:                   true,                                // Static config is enabled
+			enabledAnnotation:         "maintenance.example.com/enabled",
+			enabledAnnotationValue:    "true",
+			enabledAnnotationHeader:   "X-Kubernetes-Annotations",
+			requestAnnotationHeader:   "X-Kubernetes-Annotations",
+			requestAnnotationValue:    "other.annotation=value",            // No maintenance annotation
+			bypassHeader:              "",
+			bypassHeaderValue:         "",
+			expectedStatusCode:        http.StatusServiceUnavailable,
+			expectedMaintenanceHeader: "true",
+		},
+		{
+			name:                      "Maintenance enabled by annotation but bypassed by header",
+			enabled:                   false,                               // Static config is disabled
+			enabledAnnotation:         "maintenance.example.com/enabled",
+			enabledAnnotationValue:    "true",
+			enabledAnnotationHeader:   "X-Kubernetes-Annotations",
+			requestAnnotationHeader:   "X-Kubernetes-Annotations",
+			requestAnnotationValue:    "maintenance.example.com/enabled=true,other.annotation=value",
+			bypassHeader:              "X-Maintenance-Bypass",
+			bypassHeaderValue:         "true",
+			expectedStatusCode:        http.StatusOK,                       // Should bypass
+			expectedMaintenanceHeader: "",
+		},
+		{
+			name:                      "Maintenance annotation with wrong value",
+			enabled:                   false,                               // Static config is disabled
+			enabledAnnotation:         "maintenance.example.com/enabled",
+			enabledAnnotationValue:    "true",
+			enabledAnnotationHeader:   "X-Kubernetes-Annotations",
+			requestAnnotationHeader:   "X-Kubernetes-Annotations",
+			requestAnnotationValue:    "maintenance.example.com/enabled=false,other.annotation=value",
+			bypassHeader:              "",
+			bypassHeaderValue:         "",
+			expectedStatusCode:        http.StatusOK,                       // Should pass through
+			expectedMaintenanceHeader: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a test handler that always returns 200 OK
+			nextHandler := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+				rw.WriteHeader(http.StatusOK)
+			})
+
+			// Create a test maintenance content
+			maintenanceContent := "<html><body>Maintenance Page</body></html>"
+
+			// Create the middleware config
+			cfg := &Config{
+				MaintenanceContent:      maintenanceContent,
+				Enabled:                 tt.enabled,
+				StatusCode:              503,
+				BypassHeader:            tt.bypassHeader,
+				BypassHeaderValue:       tt.bypassHeaderValue,
+				EnabledAnnotation:       tt.enabledAnnotation,
+				EnabledAnnotationValue:  tt.enabledAnnotationValue,
+				EnabledAnnotationHeader: tt.enabledAnnotationHeader,
+			}
+
+			// Debug output
+			t.Logf("Test case: %s", tt.name)
+			t.Logf("Config: enabled=%v, annotation=%s, annotationValue=%s, annotationHeader=%s", 
+				cfg.Enabled, cfg.EnabledAnnotation, cfg.EnabledAnnotationValue, cfg.EnabledAnnotationHeader)
+			t.Logf("Request: header=%s, value=%s", tt.requestAnnotationHeader, tt.requestAnnotationValue)
+
+			// Create a logger that writes to the test output
+			logWriter := &testLogWriter{}
+			logger := log.New(logWriter, "[test-middleware] ", log.LstdFlags)
+
+			// Create the middleware
+			m, err := New(context.Background(), nextHandler, cfg, "test-middleware")
+			if err != nil {
+				t.Fatalf("Error creating middleware: %v", err)
+			}
+
+			// Inject our test logger
+			middleware := m.(*MaintenanceBypass)
+			middleware.logger = logger
+			middleware.logLevel = LogLevelDebug
+
+			// Create a test server with the middleware
+			server := httptest.NewServer(middleware)
+			defer server.Close()
+
+			// Create a client that doesn't follow redirects
+			client := &http.Client{
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					return http.ErrUseLastResponse
+				},
+			}
+
+			// Create the request
+			req, err := http.NewRequest("GET", server.URL, nil)
+			if err != nil {
+				t.Fatalf("Error creating request: %v", err)
+			}
+
+			// Add the annotation header if specified
+			if tt.requestAnnotationHeader != "" && tt.requestAnnotationValue != "" {
+				req.Header.Set(tt.requestAnnotationHeader, tt.requestAnnotationValue)
+				t.Logf("Setting header %s to %s", tt.requestAnnotationHeader, tt.requestAnnotationValue)
+			}
+
+			// Add the bypass header if specified
+			if tt.bypassHeader != "" && tt.bypassHeaderValue != "" {
+				req.Header.Set(tt.bypassHeader, tt.bypassHeaderValue)
+			}
+
+			// Send the request
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("Error sending request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			// Output debug logs
+			t.Logf("Middleware logs: %s", logWriter.String())
+
+			// Check the status code
+			if resp.StatusCode != tt.expectedStatusCode {
+				t.Errorf("Expected status code %d, got %d", tt.expectedStatusCode, resp.StatusCode)
+			}
+
+			// Check if the maintenance header is set
+			if tt.expectedMaintenanceHeader != "" {
+				if resp.Header.Get("X-Maintenance-Mode") != tt.expectedMaintenanceHeader {
+					t.Errorf("Expected X-Maintenance-Mode header to be %q, got %q", 
+						tt.expectedMaintenanceHeader, resp.Header.Get("X-Maintenance-Mode"))
+				}
+			} else {
+				if resp.Header.Get("X-Maintenance-Mode") != "" {
+					t.Errorf("Expected no X-Maintenance-Mode header, got %q", 
+						resp.Header.Get("X-Maintenance-Mode"))
+				}
+			}
+
+			// If we expect it to be in maintenance mode, check the response body
+			if tt.expectedStatusCode == http.StatusServiceUnavailable {
+				body, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("Error reading response body: %v", err)
+				}
+
+				if string(body) != maintenanceContent {
+					t.Errorf("Expected body %q, got %q", maintenanceContent, string(body))
+				}
+			}
+		})
 	}
 }

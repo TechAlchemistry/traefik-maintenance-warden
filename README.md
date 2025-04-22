@@ -130,6 +130,24 @@ http:
           maintenanceTimeout: 10
           logLevel: 1
 
+# Example 4: Using annotation-based maintenance mode in Kubernetes
+http:
+  middlewares:
+    maintenance-warden:
+      plugin:
+        maintenance-warden:
+          maintenanceContent: "<html><body><h1>Under Maintenance</h1><p>Our service is currently undergoing scheduled maintenance. We'll be back shortly.</p></body></html>"
+          bypassHeader: "X-Maintenance-Bypass"
+          bypassHeaderValue: "true"
+          enabled: false  # Default is disabled, but can be enabled per service with annotations
+          statusCode: 503
+          bypassPaths:
+            - "/health"
+            - "/api/status"
+          enabledAnnotation: "maintenance.example.com/enabled"
+          enabledAnnotationValue: "true"
+          enabledAnnotationHeader: "X-Kubernetes-Annotations"
+          logLevel: 1
 ```
 
 ## Configuration Options
@@ -142,12 +160,15 @@ http:
 | `contentType` | string | `"text/html; charset=utf-8"` | Content type header when serving a static file |
 | `bypassHeader` | string | `"X-Maintenance-Bypass"` | Name of the header that allows bypassing maintenance mode |
 | `bypassHeaderValue` | string | `"true"` | Expected value of the bypass header |
-| `enabled` | boolean | `true` | Controls whether maintenance mode is active |
+| `enabled` | boolean | `true` | Controls whether maintenance mode is active by default |
 | `statusCode` | integer | `503` | HTTP status code to return when in maintenance mode |
 | `bypassPaths` | string[] | `[]` | List of path prefixes that should bypass maintenance mode |
 | `bypassFavicon` | boolean | `true` | Controls whether favicon.ico requests bypass maintenance mode |
 | `logLevel` | integer | `1` | Controls logging verbosity (0=none, 1=error, 2=info, 3=debug) |
 | `maintenanceTimeout` | integer | `10` | Timeout in seconds for requests to the maintenance service |
+| `enabledAnnotation` | string | `""` | Kubernetes annotation name that controls whether maintenance mode is enabled |
+| `enabledAnnotationValue` | string | `"true"` | Expected value of the annotation to enable maintenance mode |
+| `enabledAnnotationHeader` | string | `""` | Header containing Kubernetes annotations (typically added by Traefik) |
 
 ## Technical Features
 
@@ -278,6 +299,71 @@ spec:
         - "/api/status"
       logLevel: 1
 ```
+
+### Annotation-Based Maintenance Mode
+
+You can use Kubernetes annotations to control maintenance mode for specific services. This allows you to enable maintenance mode on a per-service basis without modifying the middleware configuration.
+
+To use this feature:
+
+1. Configure the middleware to use annotation-based control:
+
+```yaml
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: maintenance-warden
+  namespace: default
+spec:
+  plugin:
+    maintenance-warden:
+      maintenanceContent: "<html><body><h1>Under Maintenance</h1><p>We'll be back shortly.</p></body></html>"
+      bypassHeader: "X-Maintenance-Bypass"
+      bypassHeaderValue: "secret-token"
+      enabled: false  # Default to disabled
+      statusCode: 503
+      enabledAnnotation: "maintenance.example.com/enabled"
+      enabledAnnotationValue: "true"
+      enabledAnnotationHeader: "X-Kubernetes-Annotations"
+```
+
+2. Set up Traefik to forward Kubernetes annotations to requests by configuring the Kubernetes IngressRoute provider in your Traefik configuration:
+
+```yaml
+# Static Traefik configuration
+providers:
+  kubernetesIngress:
+    allowEmptyServices: true
+    allowCrossNamespace: true
+    # Forward specific annotations as headers
+    annotationSelector: "maintenance.example.com/enabled"
+```
+
+3. Add the annotation to any service you want to put in maintenance mode:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-service
+  annotations:
+    # This annotation will enable maintenance mode for this service
+    maintenance.example.com/enabled: "true"
+spec:
+  rules:
+    - host: service.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: my-service
+                port:
+                  number: 80
+```
+
+With this setup, the middleware will check for the `maintenance.example.com/enabled` annotation on each incoming request. If the annotation is present and set to "true", the service will be put in maintenance mode. This allows you to selectively enable maintenance for specific services without changing the middleware configuration.
 
 ## Comprehensive Example
 
