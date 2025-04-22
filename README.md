@@ -10,22 +10,30 @@
 
 Maintenance Warden is a lightweight, high-performance middleware plugin for Traefik that provides a flexible maintenance mode solution for your services. It allows you to easily activate maintenance mode across your infrastructure while maintaining accessibility for authorized users through a configurable bypass header.
 
+## Latest Release
+
+**Version v1.1.0** adds important new features:
+- **JWT Token-Based Bypass**: Use your existing JWT authentication flow to control access during maintenance
+- **Annotation-Based Control**: Enable maintenance mode per service in Kubernetes via annotations
+
 ## Key Features
 
 - **Triple-Mode Flexibility**: Choose between file-based, content-based, or service-based maintenance pages
-- **Selective Access Control**: Maintain service access for authorized users via configurable bypass headers
+- **Multiple Bypass Mechanisms**: Header-based, JWT token-based, and path-based access control
+- **Selective Access Control**: Maintain service access for authorized users via configurable mechanisms
 - **Path-Based Exceptions**: Configure specific paths to bypass maintenance mode automatically
 - **Low Overhead**: Minimal performance impact with optimized request handling
-- **Kubernetes Ready**: Easily integrate with your Kubernetes configuration
+- **Kubernetes Ready**: Easily integrate with your Kubernetes configuration including annotation support
 
-This plugin serves a maintenance page when maintenance mode is enabled, while allowing requests with a specific bypass header to access the original service.
+This plugin serves a maintenance page when maintenance mode is enabled, while allowing requests with specific bypass mechanisms to access the original service.
 
 ## How it Works
 
-1. The middleware checks if maintenance mode is enabled
+1. The middleware checks if maintenance mode is enabled (either via static configuration or Kubernetes annotations)
 2. If disabled, all traffic passes through normally
 3. If enabled, all incoming requests are checked for:
    - Presence of the bypass header with correct value
+   - JWT token with specified claim value (if JWT bypass is configured)
    - Whether the path starts with any of the configured bypass paths
    - Whether the request is for favicon.ico (if bypassFavicon is true)
 4. If any bypass condition is met, the request proceeds to the intended service
@@ -41,13 +49,14 @@ This plugin serves a maintenance page when maintenance mode is enabled, while al
 flowchart TB
     A[Client Request] --> B[Traefik]
     B --> C[Maintenance Warden]
-    C -->|Maintenance Mode Disabled| D[Target Service]
-    C -->|Maintenance Mode Enabled| E{Check Bypass\nConditions}
-    E -->|Bypass Header Match\nor Path Match| D
-    E -->|No Bypass Match| F{Content Type}
-    F -->|File-Based| G[Serve Maintenance File]
-    F -->|Content-Based| I[Serve Inline Content]
-    F -->|Service-Based| H[Proxy to Maintenance Service]
+    C -->|Check Maintenance Mode| D{Enabled?}
+    D -->|No| E[Target Service]
+    D -->|Yes - Static Config or Annotation| F{Check Bypass Conditions}
+    F -->|Bypass Header Match or JWT Token Match or Path Match| E
+    F -->|No Bypass Match| G{Content Type}
+    G -->|File-Based| H[Serve Maintenance File]
+    G -->|Content-Based| I[Serve Inline Content]
+    G -->|Service-Based| J[Proxy to Maintenance Service]
 ```
 
 ## Design Philosophy
@@ -71,7 +80,7 @@ experimental:
   plugins:
     maintenance-warden:
       moduleName: "github.com/TechAlchemistry/traefik-maintenance-warden"
-      version: "v1.0.0"
+      version: "v1.1.0"
 ```
 
 ### Dynamic Configuration
