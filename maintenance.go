@@ -78,15 +78,6 @@ type Config struct {
 
 	// ContentType is the content type header to set when serving the maintenance file
 	ContentType string `json:"contentType,omitempty"`
-
-	// EnabledAnnotation is the Kubernetes annotation name that controls the enabled state
-	EnabledAnnotation string `json:"enabledAnnotation,omitempty"`
-
-	// EnabledAnnotationValue is the expected value of the enabled annotation
-	EnabledAnnotationValue string `json:"enabledAnnotationValue,omitempty"`
-
-	// EnabledAnnotationHeader is the header that Traefik adds with the annotation value
-	EnabledAnnotationHeader string `json:"enabledAnnotationHeader,omitempty"`
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -107,9 +98,6 @@ func CreateConfig() *Config {
 		LogLevel:                int(LogLevelError),
 		MaintenanceTimeout:      10,
 		ContentType:             "text/html; charset=utf-8",
-		EnabledAnnotation:       "",
-		EnabledAnnotationValue:  "true",
-		EnabledAnnotationHeader: "",
 	}
 }
 
@@ -137,9 +125,6 @@ type MaintenanceBypass struct {
 	logLevel               LogLevel
 	timeout                time.Duration
 	contentType            string
-	enabledAnnotation      string
-	enabledAnnotationValue string
-	enabledAnnotationHeader string
 }
 
 // New creates a new MaintenanceBypass middleware.
@@ -177,9 +162,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		logger:                 logger,
 		logLevel:               LogLevel(config.LogLevel),
 		contentType:            contentType,
-		enabledAnnotation:      config.EnabledAnnotation,
-		enabledAnnotationValue: config.EnabledAnnotationValue,
-		enabledAnnotationHeader: config.EnabledAnnotationHeader,
+		timeout:                time.Duration(config.MaintenanceTimeout) * time.Second,
 	}
 
 	// If maintenance file path is specified, try to read it initially
@@ -203,13 +186,11 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 
 		// Set default timeout if not specified
-		timeout := time.Duration(config.MaintenanceTimeout) * time.Second
-		if timeout == 0 {
-			timeout = 10 * time.Second
+		if m.timeout == 0 {
+			m.timeout = 10 * time.Second
 		}
 
 		m.maintenanceService = maintenanceURL
-		m.timeout = timeout
 	} else {
 		return nil, fmt.Errorf("either maintenanceService, maintenanceFilePath, or maintenanceContent must be specified")
 	}
@@ -259,24 +240,6 @@ func (m *MaintenanceBypass) log(level LogLevel, format string, v ...interface{})
 // isMaintenanceEnabled checks if maintenance mode is enabled for this request
 // taking into account both the static configuration and any dynamic annotation
 func (m *MaintenanceBypass) isMaintenanceEnabled(req *http.Request) bool {
-	// If annotation-based configuration is enabled, check for annotation
-	if m.enabledAnnotation != "" && m.enabledAnnotationHeader != "" {
-		// Check for the annotation value in the header
-		annotationHeader := req.Header.Get(m.enabledAnnotationHeader)
-		m.log(LogLevelDebug, "Checking annotation header: %s = %s", m.enabledAnnotationHeader, annotationHeader)
-		
-		// Check if the annotation exists with the right value
-		annotationWithValue := fmt.Sprintf("%s=%s", m.enabledAnnotation, m.enabledAnnotationValue)
-		if strings.Contains(annotationHeader, annotationWithValue) {
-			m.log(LogLevelDebug, "Found annotation %s with value %s, maintenance mode enabled", 
-				m.enabledAnnotation, m.enabledAnnotationValue)
-			return true
-		}
-		
-		// If we're using annotation control and the annotation doesn't match, use the static config
-		m.log(LogLevelDebug, "Annotation control enabled but value not found or not matching, using static config: %v", m.enabled)
-	}
-	
 	// No annotation control or no match, use the static configuration
 	return m.enabled
 }

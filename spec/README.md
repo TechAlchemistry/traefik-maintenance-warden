@@ -20,16 +20,17 @@ Maintenance Warden is a Traefik middleware plugin that provides a flexible maint
 
 The plugin is designed with simplicity, reliability, and flexibility in mind, making it suitable for a wide range of deployment scenarios from simple websites to complex microservice architectures.
 
-## Key Features
+## Features
 
-- **Triple-Mode Flexibility**: Choose between file-based, content-based, or service-based maintenance pages
-- **Selective Access Control**: Maintain service access for authorized users via configurable bypass headers
-- **JWT Token Integration**: Support for JWT token-based bypass for role-based maintenance access
-- **Path-Based Exceptions**: Configure specific paths to bypass maintenance mode automatically
-- **Low Overhead**: Minimal performance impact with optimized request handling
-- **Kubernetes Ready**: Easily integrate with your Kubernetes configuration
-- **Annotation-Based Control**: Toggle maintenance mode per-service in Kubernetes using annotations
-- **Centralized Header Management**: Consistent maintenance response headers across all content types
+### Core Features
+
+- **Multiple Maintenance Source Options**: File-based, content-based, or service-based maintenance pages
+- **Header-Based Bypass**: Allow specific requests to bypass maintenance mode
+- **Path-Based Bypass**: Configure specific paths to bypass maintenance mode (healthchecks, etc.)
+- **JWT-Based Bypass**: Use JWT tokens to control access during maintenance
+- **Configurable Status Codes**: Return appropriate HTTP status for maintenance mode
+- **Performance Optimized**: Minimal overhead with efficient request handling
+- **Kubernetes Integration**: Full compatibility with Kubernetes Ingress and IngressRoute
 
 ## Getting Started
 

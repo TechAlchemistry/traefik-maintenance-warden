@@ -14,7 +14,6 @@ Maintenance Warden is a lightweight, high-performance middleware plugin for Trae
 
 **Version v1.1.0** adds important new features:
 - **JWT Token-Based Bypass**: Use your existing JWT authentication flow to control access during maintenance
-- **Annotation-Based Control**: Enable maintenance mode per service in Kubernetes via annotations
 
 ## Key Features
 
@@ -23,13 +22,13 @@ Maintenance Warden is a lightweight, high-performance middleware plugin for Trae
 - **Selective Access Control**: Maintain service access for authorized users via configurable mechanisms
 - **Path-Based Exceptions**: Configure specific paths to bypass maintenance mode automatically
 - **Low Overhead**: Minimal performance impact with optimized request handling
-- **Kubernetes Ready**: Easily integrate with your Kubernetes configuration including annotation support
+- **Kubernetes Ready**: Easily integrate with your Kubernetes configuration
 
 This plugin serves a maintenance page when maintenance mode is enabled, while allowing requests with specific bypass mechanisms to access the original service.
 
 ## How it Works
 
-1. The middleware checks if maintenance mode is enabled (either via static configuration or Kubernetes annotations)
+1. The middleware checks if maintenance mode is enabled
 2. If disabled, all traffic passes through normally
 3. If enabled, all incoming requests are checked for:
    - Presence of the bypass header with correct value
@@ -51,7 +50,7 @@ flowchart TB
     B --> C[Maintenance Warden]
     C -->|Check Maintenance Mode| D{Enabled?}
     D -->|No| E[Target Service]
-    D -->|Yes - Static Config or Annotation| F{Check Bypass Conditions}
+    D -->|Yes| F{Check Bypass Conditions}
     F -->|Bypass Header Match or JWT Token Match or Path Match| E
     F -->|No Bypass Match| G{Content Type}
     G -->|File-Based| H[Serve Maintenance File]
@@ -72,171 +71,117 @@ The file-based and content-based approaches are simpler and more reliable, while
 
 ## Configuration
 
-### Static Configuration
+The plugin accepts the following configuration options:
 
 ```yaml
-# Static configuration in YAML
-experimental:
-  plugins:
-    maintenance-warden:
-      moduleName: "github.com/TechAlchemistry/traefik-maintenance-warden"
-      version: "v1.1.0"
+# Static maintenance mode
+testMiddleware:
+  plugin:
+    traefik-maintenance-warden:
+      enabled: true  # Enable/disable maintenance mode
+      maintenanceContent: "<html><body>Site is under maintenance</body></html>"  # HTML content to display
+      bypassHeader: "X-Maintenance-Bypass"  # Header name to bypass maintenance mode
+      bypassHeaderValue: "true"  # Expected value of bypass header
+      statusCode: 503  # HTTP status code to return (default: 503)
+      bypassPaths:  # Paths that should bypass maintenance mode
+        - "/healthz"
+        - "/readyz"
+      bypassFavicon: true  # Whether favicon.ico requests bypass maintenance (default: true)
+      logLevel: 1  # Log level: 0=none, 1=error, 2=info, 3=debug (default: 1)
 ```
 
-### Dynamic Configuration
+OR
 
 ```yaml
-# Dynamic configuration in YAML
-
-# Example 1: Using inline content (simplest option for basic maintenance pages)
-http:
-  middlewares:
-    maintenance-warden:
-      plugin:
-        maintenance-warden:
-          maintenanceContent: "<html><body><h1>Under Maintenance</h1><p>Our service is currently undergoing scheduled maintenance. We'll be back shortly.</p></body></html>"
-          contentType: "text/html; charset=utf-8"
-          bypassHeader: "X-Maintenance-Bypass"
-          bypassHeaderValue: "true"
-          enabled: true
-          statusCode: 503
-          bypassPaths:
-            - "/health"
-            - "/api/status"
-          logLevel: 1
-
-# Example 2: Using a static HTML file (recommended for simple maintenance pages)
-http:
-  middlewares:
-    maintenance-warden:
-      plugin:
-        maintenance-warden:
-          maintenanceFilePath: "/path/to/maintenance.html"
-          contentType: "text/html; charset=utf-8"
-          bypassHeader: "X-Maintenance-Bypass"
-          bypassHeaderValue: "true"
-          enabled: true
-          statusCode: 503
-          bypassPaths:
-            - "/health"
-            - "/api/status"
-          logLevel: 1
-
-# Example 3: Using a maintenance service (to reroute requests to a maintenance service for dynamic content)
-http:
-  middlewares:
-    maintenance-warden:
-      plugin:
-        maintenance-warden:
-          maintenanceService: "http://maintenance-page-service.test-maintenance"
-          bypassHeader: "X-Maintenance-Bypass"
-          bypassHeaderValue: "true"
-          enabled: true
-          statusCode: 503
-          bypassPaths:
-            - "/health"
-            - "/api/status"
-          maintenanceTimeout: 10
-          logLevel: 1
-
-# Example 4: Using annotation-based maintenance mode in Kubernetes
-http:
-  middlewares:
-    maintenance-warden:
-      plugin:
-        maintenance-warden:
-          maintenanceContent: "<html><body><h1>Under Maintenance</h1><p>Our service is currently undergoing scheduled maintenance. We'll be back shortly.</p></body></html>"
-          bypassHeader: "X-Maintenance-Bypass"
-          bypassHeaderValue: "true"
-          enabled: false  # Default is disabled, but can be enabled per service with annotations
-          statusCode: 503
-          bypassPaths:
-            - "/health"
-            - "/api/status"
-          enabledAnnotation: "maintenance.example.com/enabled"
-          enabledAnnotationValue: "true"
-          enabledAnnotationHeader: "X-Kubernetes-Annotations"
-          logLevel: 1
+# Maintenance service
+testMiddleware:
+  plugin:
+    traefik-maintenance-warden:
+      enabled: true
+      maintenanceService: "http://maintenance:8080"
+      maintenanceTimeout: 5  # Timeout in seconds (default: 10)
+      bypassHeader: "X-Maintenance-Bypass"
+      bypassHeaderValue: "true"
+      statusCode: 503
 ```
 
-## Configuration Options
+OR
+
+```yaml
+# Static maintenance file
+testMiddleware:
+  plugin:
+    traefik-maintenance-warden:
+      enabled: true
+      maintenanceFilePath: "/path/to/maintenance.html"
+      bypassHeader: "X-Maintenance-Bypass"
+      bypassHeaderValue: "true"
+      contentType: "text/html; charset=utf-8"  # Content type header (default: text/html; charset=utf-8)
+```
+
+With JWT token-based bypass:
+
+```yaml
+testMiddleware:
+  plugin:
+    traefik-maintenance-warden:
+      enabled: true
+      maintenanceFilePath: "/path/to/maintenance.html"
+      bypassJWTTokenHeader: "Authorization"  # Header containing the JWT token (default: Authorization)
+      bypassJWTTokenClaim: "maintenance-bypass"  # Claim name to check
+      bypassJWTTokenClaimValue: "true"  # Expected claim value
+```
+
+# Configuration Reference
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `maintenanceService` | string | `""` | URL of the maintenance service to redirect to |
-| `maintenanceFilePath` | string | `""` | Path to a static HTML file to serve (takes precedence over maintenanceService) |
-| `maintenanceContent` | string | `""` | Direct HTML content to serve (takes precedence over maintenanceFilePath and maintenanceService) |
-| `contentType` | string | `"text/html; charset=utf-8"` | Content type header when serving a static file |
-| `bypassHeader` | string | `"X-Maintenance-Bypass"` | Name of the header that allows bypassing maintenance mode |
+| `maintenanceFilePath` | string | `""` | Path to a static HTML file to serve instead of redirecting |
+| `maintenanceContent` | string | `""` | Direct HTML content to serve instead of a file or service |
+| `bypassHeader` | string | `"X-Maintenance-Bypass"` | Header name that allows bypassing maintenance mode |
 | `bypassHeaderValue` | string | `"true"` | Expected value of the bypass header |
-| `bypassJWTTokenHeader` | string | `"Authorization"` | Header containing the JWT token for bypassing maintenance mode |
-| `bypassJWTTokenClaim` | string | `""` | Name of the claim in the JWT token that controls bypassing maintenance mode |
-| `bypassJWTTokenClaimValue` | string | `""` | Expected value of the JWT token claim to bypass maintenance mode |
-| `enabled` | boolean | `true` | Controls whether maintenance mode is active by default |
-| `statusCode` | integer | `503` | HTTP status code to return when in maintenance mode |
-| `bypassPaths` | string[] | `[]` | List of path prefixes that should bypass maintenance mode |
-| `bypassFavicon` | boolean | `true` | Controls whether favicon.ico requests bypass maintenance mode |
-| `logLevel` | integer | `1` | Controls logging verbosity (0=none, 1=error, 2=info, 3=debug) |
-| `maintenanceTimeout` | integer | `10` | Timeout in seconds for requests to the maintenance service |
-| `enabledAnnotation` | string | `""` | Kubernetes annotation name that controls whether maintenance mode is enabled |
-| `enabledAnnotationValue` | string | `"true"` | Expected value of the annotation to enable maintenance mode |
-| `enabledAnnotationHeader` | string | `""` | Header containing Kubernetes annotations (typically added by Traefik) |
+| `bypassJWTTokenHeader` | string | `"Authorization"` | Header containing the JWT token |
+| `bypassJWTTokenClaim` | string | `""` | Claim name in the JWT token that contains the bypass value |
+| `bypassJWTTokenClaimValue` | string | `""` | Expected value of the JWT token claim |
+| `enabled` | bool | `true` | Controls whether the maintenance mode is active |
+| `statusCode` | int | `503` | HTTP status code to return when in maintenance mode |
+| `bypassPaths` | []string | `[]` | Paths that should bypass maintenance mode |
+| `bypassFavicon` | bool | `true` | Controls whether favicon.ico requests bypass maintenance mode |
+| `logLevel` | int | `1` | Controls the verbosity of logging (0=none, 1=error, 2=info, 3=debug) |
+| `maintenanceTimeout` | int | `10` | Timeout for requests to the maintenance service in seconds |
+| `contentType` | string | `"text/html; charset=utf-8"` | Content type header to set when serving the maintenance file |
 
 ## Technical Features
 
-### 1. Content Serving Modes
+- **Multiple Maintenance Content Sources**:
+  - Inline HTML content (simplest)
+  - Static HTML file (simple and flexible)
+  - External maintenance service (most powerful)
 
-#### File-Based Maintenance
-- **Implementation**: Direct file serving from disk
-- **Performance**: High performance with minimal latency
-- **Caching**: File content is cached in memory for efficiency
-- **Change Detection**: Checks file modification times to auto-reload
-- **Resource Usage**: Minimal memory footprint (~size of HTML file)
+- **Bypass Mechanisms**:
+  - HTTP header-based bypass
+  - Path-based bypass (for health checks, etc.)
+  - JWT token claim-based bypass for secure access
+  
+- **Operational Features**:
+  - Configurable HTTP status code
+  - Favicon bypass (to prevent console errors in browsers)
+  - Detailed logging with configurable verbosity
+  - Custom Content-Type header support
 
-#### Content-Based Maintenance
-- **Implementation**: Direct string content serving from configuration
-- **Performance**: Highest performance with zero latency
-- **Simplicity**: No file access or network required
-- **Deployment**: Content directly embedded in configuration
-- **Resource Usage**: Minimal memory footprint (only size of content string)
+## How It Works
 
-#### Service-Based Maintenance
-- **Implementation**: HTTP reverse proxy to maintenance service
-- **Flexibility**: Supports dynamic content generation
-- **Timeout Handling**: Configurable timeouts with fallback
-- **Protocol Support**: Preserves original request methods and headers
-- **Error Handling**: Graceful fallback on service errors
+The plugin sits as a middleware in the Traefik request flow:
 
-### 2. Request Bypass Logic
-
-#### Header-Based Bypass
-- **Security**: Supports custom header names and values
-- **Implementation**: Simple string comparison for performance
-- **Flexibility**: Both header name and expected value are configurable
-
-#### Path-Based Bypass
-- **Implementation**: Prefix matching for efficiency
-- **Use Cases**: Ideal for health checks, API status endpoints
-- **Configuration**: Array of path prefixes to bypass
-
-#### JWT Token-Based Bypass
-- **Implementation**: Extracts and verifies claims from JWT tokens
-- **Security**: Allows integration with existing JWT-based authentication systems
-- **Use Cases**: Perfect for admin dashboards, internal tools, or when team members use JWT-authenticated applications
-- **Flexibility**: Configurable token header, claim name, and expected claim value
-- **Bearer Support**: Automatically handles 'Bearer' prefix in Authorization headers
-
-### 3. Response Management
-
-#### Status Code Control
-- **Implementation**: Configurable HTTP status code
-- **Default**: 503 Service Unavailable (SEO-friendly for maintenance)
-- **Headers**: Adds maintenance-specific headers automatically
-
-#### Content Type Control
-- **Implementation**: Configurable content type header
-- **Default**: "text/html; charset=utf-8"
-- **Flexibility**: Supports any valid content type
+1. When a request comes in, the plugin checks if maintenance mode is enabled
+2. If enabled, it checks if any bypass conditions are met:
+   - Request has the bypass header with correct value
+   - Request path matches one of the bypass paths
+   - Request contains a JWT token with the correct bypass claim
+   - Request is for favicon.ico (if enabled)
+3. If any bypass condition is met, the request is passed to the normal service
+4. Otherwise, the maintenance page is served with the configured status code
 
 ## Choosing Between Maintenance Page Options
 
@@ -339,71 +284,6 @@ spec:
         - "/api/status"
       logLevel: 1
 ```
-
-### Annotation-Based Maintenance Mode
-
-You can use Kubernetes annotations to control maintenance mode for specific services. This allows you to enable maintenance mode on a per-service basis without modifying the middleware configuration.
-
-To use this feature:
-
-1. Configure the middleware to use annotation-based control:
-
-```yaml
-apiVersion: traefik.containo.us/v1alpha1
-kind: Middleware
-metadata:
-  name: maintenance-warden
-  namespace: default
-spec:
-  plugin:
-    maintenance-warden:
-      maintenanceContent: "<html><body><h1>Under Maintenance</h1><p>We'll be back shortly.</p></body></html>"
-      bypassHeader: "X-Maintenance-Bypass"
-      bypassHeaderValue: "secret-token"
-      enabled: false  # Default to disabled
-      statusCode: 503
-      enabledAnnotation: "maintenance.example.com/enabled"
-      enabledAnnotationValue: "true"
-      enabledAnnotationHeader: "X-Kubernetes-Annotations"
-```
-
-2. Set up Traefik to forward Kubernetes annotations to requests by configuring the Kubernetes IngressRoute provider in your Traefik configuration:
-
-```yaml
-# Static Traefik configuration
-providers:
-  kubernetesIngress:
-    allowEmptyServices: true
-    allowCrossNamespace: true
-    # Forward specific annotations as headers
-    annotationSelector: "maintenance.example.com/enabled"
-```
-
-3. Add the annotation to any service you want to put in maintenance mode:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: my-service
-  annotations:
-    # This annotation will enable maintenance mode for this service
-    maintenance.example.com/enabled: "true"
-spec:
-  rules:
-    - host: service.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: my-service
-                port:
-                  number: 80
-```
-
-With this setup, the middleware will check for the `maintenance.example.com/enabled` annotation on each incoming request. If the annotation is present and set to "true", the service will be put in maintenance mode. This allows you to selectively enable maintenance for specific services without changing the middleware configuration.
 
 ## Comprehensive Example
 

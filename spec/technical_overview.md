@@ -44,113 +44,64 @@ Maintenance Warden is a middleware plugin for Traefik that intercepts HTTP reque
    - If any bypass condition is met, pass to target service
    - Otherwise, serve maintenance content (file or service)
 
+## Request Flow
+
+The plugin processes requests in the following order:
+
+1. Incoming request arrives at the middleware
+2. Check if maintenance mode is enabled (static configuration)
+3. If disabled, pass request to the next handler
+4. If enabled, check for bypass conditions:
+   - Check if request path is in bypass paths list
+   - Check if request is for favicon.ico (if configured)
+   - Check if request has bypass header with correct value
+   - Check if request has JWT token with correct claim value
+5. If any bypass condition is met, pass request to the next handler
+6. If no bypass condition is met, serve maintenance page:
+   - If content-based, serve the inline content
+   - If file-based, serve the file (cached or reload if modified)
+   - If service-based, proxy to the maintenance service
+
+### Data Flow Visualization
+
 ```mermaid
 flowchart TB
-    A[Client Request] --> B[Traefik]
-    B --> C[Maintenance Warden]
-    C -->|Check Annotations| CC{Annotation Enabled?}
-    CC -->|Yes| CCC[Use Annotation Setting]
-    CC -->|No| CCC2[Use Static Configuration]
-    CCC --> D2{Maintenance Mode Enabled?}
-    CCC2 --> D2
-    D2 -->|No| D[Target Service]
-    D2 -->|Yes| E{Check Bypass Conditions}
-    E -->|Header Match| D
-    E -->|Path Match| D
-    E -->|JWT Token Claim Match| D
-    E -->|No Bypass Match| F{Content Type}
-    F -->|File-Based| G[Serve Maintenance File]
-    F -->|Content-Based| I[Serve Inline Content]
-    F -->|Service-Based| H[Proxy to Maintenance Service]
+    A[Client Request] --> B[Maintenance Warden]
+    B --> C{Maintenance Mode Enabled?}
+    C -->|No| D[Pass to Original Service]
+    C -->|Yes| E{Check Bypass Conditions}
+    E -->|Path Match or Favicon or Header or JWT| D
+    E -->|No Bypass| F{Content Source}
+    F -->|File| G[Serve File]
+    F -->|Content| H[Serve HTML Content]
+    F -->|Service| I[Proxy to Maintenance Service]
 ```
 
 ## Technical Features
 
-### 1. Content Serving Modes
+The Maintenance Warden plugin offers a comprehensive set of features:
 
-#### File-Based Maintenance
-- **Implementation**: Direct file serving from disk
-- **Performance**: High performance with minimal latency
-- **Caching**: File content is cached in memory for efficiency
-- **Change Detection**: Checks file modification times to auto-reload
-- **Resource Usage**: Minimal memory footprint (~size of HTML file)
+1. **Multiple Content Sources**
+   - File-based maintenance page serving
+   - Inline content-based serving
+   - Maintenance service proxying
 
-#### Content-Based Maintenance
-- **Implementation**: Direct string content serving from configuration
-- **Performance**: Highest performance with zero latency
-- **Simplicity**: No file access or network required
-- **Deployment**: Content directly embedded in configuration
-- **Resource Usage**: Minimal memory footprint (only size of content string)
+2. **Bypass Mechanisms**
+   - Header-based bypass with configurable header name and value
+   - Path-based bypass for health checks and critical endpoints
+   - Favicon bypass to prevent browser console errors
+   - JWT token-based bypass for role-based access control
 
-#### Service-Based Maintenance
-- **Implementation**: HTTP reverse proxy to maintenance service
-- **Flexibility**: Supports dynamic content generation
-- **Timeout Handling**: Configurable timeouts with fallback
-- **Protocol Support**: Preserves original request methods and headers
-- **Error Handling**: Graceful fallback on service errors
+3. **Performance Optimizations**
+   - File content caching with modification detection
+   - Minimal memory footprint
+   - Efficient request handling
 
-### 2. Request Bypass Logic
-
-#### Header-Based Bypass
-- **Security**: Supports custom header names and values
-- **Implementation**: Simple string comparison for performance
-- **Flexibility**: Both header name and expected value are configurable
-
-#### Path-Based Bypass
-- **Implementation**: Prefix matching for efficiency
-- **Use Cases**: Ideal for health checks, API status endpoints
-- **Configuration**: Array of path prefixes to bypass
-
-#### JWT Token-Based Bypass
-- **Implementation**: JWT token claim extraction and validation
-- **Security**: Integration with existing JWT authentication systems
-- **Use Cases**: Admin access, internal tools, authenticated developer access during maintenance
-- **Claim Extraction**: Lightweight extraction of claims without full JWT validation
-- **Flexibility**: Configurable token header, claim name, and expected claim value
-- **Bearer Support**: Automatic handling of 'Bearer' prefix in Authorization headers
-
-#### Special Cases
-- **Favicon Handling**: Optional special case for favicon.ico requests
-- **Implementation**: String suffix matching for performance
-
-### 3. Response Management
-
-#### Status Code Control
-- **Implementation**: Configurable HTTP status code
-- **Default**: 503 Service Unavailable (SEO-friendly for maintenance)
-- **Headers**: Adds maintenance-specific headers automatically
-
-#### Content Type Control
-- **Implementation**: Configurable content type header
-- **Default**: "text/html; charset=utf-8"
-- **Flexibility**: Supports any valid content type
-
-#### Response Headers
-- **Retry-After**: Automatically added for better client behavior
-- **X-Maintenance-Mode**: Status indicator for monitoring
-- **Cache-Control**: Prevents caching of maintenance responses
-
-### 4. Kubernetes Integration
-
-#### Annotation-Based Maintenance Mode
-- **Implementation**: Dynamic maintenance mode toggle via annotations
-- **Configuration**: Custom annotation name and value configuration
-- **Headers**: Uses Traefik-forwarded Kubernetes annotation headers
-- **Default Behavior**: Falls back to static configuration if annotations not present
-- **Per-Service Control**: Enable maintenance for specific services without changing middleware config
-
-### 5. Logging and Monitoring
-
-#### Configurable Verbosity
-- **Levels**: None (0), Error (1), Info (2), Debug (3)
-- **Implementation**: Level-based filtering for efficient logging
-- **Output**: Standardized log format with plugin identifier
-
-#### Operational Events
-- **Startup**: Configuration validation and startup information
-- **File Loading**: Maintenance file loading status and size
-- **Request Handling**: Request path and bypass decisions
-- **Errors**: Detailed error information for troubleshooting
+4. **Operational Features**
+   - Configurable HTTP status code
+   - Custom content type header
+   - Detailed logging with configurable levels
+   - Timeout configuration for maintenance service requests
 
 ## Technical Requirements
 
